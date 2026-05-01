@@ -3,8 +3,7 @@ name: Build and Release
 on:
   push:
     branches: [master]
-  release:
-    types: [created]
+    tags: [v*]
   workflow_dispatch:
 
 jobs:
@@ -31,7 +30,7 @@ jobs:
 
   release:
     needs: build
-    if: github.event_name == 'release'
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -44,9 +43,9 @@ jobs:
       - name: Make binary executable
         run: chmod +x ac
 
-      - name: Upload Release Asset
+      - name: Create Release and Upload Asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.ref_name }}
         run: |
-          gh release upload "$TAG" ac --clobber
+          gh release create "$TAG" ac --generate-notes || gh release upload "$TAG" ac --clobber
