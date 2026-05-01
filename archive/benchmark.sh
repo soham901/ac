@@ -2,16 +2,39 @@
 
 CONFIG_DIR="$HOME/.config/ac"
 
+spinner_inline() {
+  local pid=$1
+  local delay=0.15
+  while [ -d /proc/$pid ]; do
+    echo -ne "\r[..] " && sleep $delay
+    echo -ne "\r[...]" && sleep $delay
+  done
+  echo -ne "\r[OK] "
+}
+
 # Ensure models cache exists
 if [ ! -f "$CONFIG_DIR/models.json" ]; then
-  echo "Fetching models list..."
+  echo -n "Fetching models list... "
   mkdir -p "$CONFIG_DIR"
-  models_json=$(curl -s "https://openrouter.ai/api/v1/models" 2>/dev/null)
-  if [ -z "$models_json" ]; then
-    echo "Error: Could not fetch models from API"
+  (
+    models_json=$(curl -s --max-time 15 "https://openrouter.ai/api/v1/models" 2>/dev/null)
+    if [ -z "$models_json" ]; then
+      echo "[ERROR] Could not fetch models from API" >&2
+      exit 1
+    fi
+    echo "$models_json" > "$CONFIG_DIR/models.json"
+  ) &
+  
+  spinner_inline $!
+  wait $!
+  exit_code=$?
+  
+  if [ $exit_code -ne 0 ]; then
+    echo ""
+    echo "[ERROR] Failed to fetch models."
     exit 1
   fi
-  echo "$models_json" > "$CONFIG_DIR/models.json"
+  echo "Done"
 fi
 
 # Get models from arguments or use defaults
@@ -40,7 +63,8 @@ echo "────────────────────────�
 RESULTS=()
 
 if [ -z "$OPENROUTER_API_KEY" ]; then
-  echo "Error: OPENROUTER_API_KEY not set. Set it with: export OPENROUTER_API_KEY=your_key"
+  echo "[ERROR] OPENROUTER_API_KEY not set"
+  echo "Set it with: export OPENROUTER_API_KEY=your_key"
   exit 1
 fi
 
