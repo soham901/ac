@@ -1,0 +1,36 @@
+#!/bin/bash
+
+CONFIG_DIR="$HOME/.config/ac"
+
+# Fetch models if cache doesn't exist
+if [ ! -f "$CONFIG_DIR/models.json" ]; then
+  echo "Fetching models list..."
+  mkdir -p "$CONFIG_DIR"
+  models_json=$(curl -s "https://openrouter.ai/api/v1/models" 2>/dev/null)
+  if [ -z "$models_json" ]; then
+    echo "Error: Could not fetch models from API"
+    exit 1
+  fi
+  echo "$models_json" > "$CONFIG_DIR/models.json"
+fi
+
+# Handle flags
+if [ "$1" = "--names" ] || [ "$1" = "-n" ]; then
+  cat "$CONFIG_DIR/models.json" | jq -r '.data[].id' | sort | tr '\n' ' ' | sed 's/ $//'
+  echo ""
+elif [ "$1" = "--free" ] || [ "$1" = "-f" ]; then
+  cat "$CONFIG_DIR/models.json" | jq -r '.data[] | select(.pricing.prompt == 0 and .pricing.completion == 0) | .id' | sort | tr '\n' ' ' | sed 's/ $//'
+  echo ""
+else
+  echo "════════════════════════════════════════"
+  echo "  Available Free Models (OpenRouter)"
+  echo "════════════════════════════════════════"
+  echo ""
+
+  cat "$CONFIG_DIR/models.json" | jq -r '.data[] | select(.pricing.prompt == 0 and .pricing.completion == 0) | .id' | sort | nl
+
+  echo ""
+  total=$(cat "$CONFIG_DIR/models.json" | jq '[.data[] | select(.pricing.prompt == 0 and .pricing.completion == 0)] | length')
+  echo "Total: $total free models"
+  echo ""
+fi

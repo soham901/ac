@@ -3,6 +3,20 @@
 CONFIG_DIR="$HOME/.config/ac"
 CONFIG_FILE="$CONFIG_DIR/config"
 
+ensure_models_cache() {
+  if [ ! -f "$CONFIG_DIR/models.json" ]; then
+    echo "Fetching available models..."
+    mkdir -p "$CONFIG_DIR"
+    models_json=$(curl -s "https://openrouter.ai/api/v1/models" 2>/dev/null)
+    if [ -z "$models_json" ]; then
+      echo "Could not fetch models from API"
+      return 1
+    fi
+    echo "$models_json" > "$CONFIG_DIR/models.json"
+  fi
+  return 0
+}
+
 init_config() {
   mkdir -p "$CONFIG_DIR"
   
@@ -10,44 +24,40 @@ init_config() {
   echo "  First-time setup for 'ac' command"
   echo "════════════════════════════════════════"
   echo ""
-  echo "Fetching available models (this may take a moment)..."
   
-  # Fetch models from endpoint
-  models_json=$(curl -s "https://opencode.ai/zen/v1/models" 2>/dev/null)
-  
-  if [ -z "$models_json" ]; then
-    echo "Could not fetch models. Using default: minimax-m2.5-free"
-    model="minimax-m2.5-free"
+  if ! ensure_models_cache; then
+    echo "Using default: openrouter/free"
+    model="openrouter/free"
   else
-    # Cache the models list
-    echo "$models_json" > "$CONFIG_DIR/models.json"
+    models_json=$(cat "$CONFIG_DIR/models.json")
     
-    echo "Available models:"
+    echo "Available free models:"
     echo ""
-    # Parse and display models
-    echo "$models_json" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | nl
+    # Parse and display free models only
+    free_models=$(echo "$models_json" | jq -r '.data[] | select(.pricing.prompt == 0 and .pricing.completion == 0) | .id' | sort)
+    echo "$free_models" | nl
     echo ""
     read -p "Enter model number or custom model ID: " choice
     
     if [[ "$choice" =~ ^[0-9]+$ ]]; then
       # Extract model by number
-      model=$(echo "$models_json" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | sed -n "${choice}p")
+      model=$(echo "$free_models" | sed -n "${choice}p")
       if [ -z "$model" ]; then
-        echo "Invalid selection. Using default: minimax-m2.5-free"
-        model="minimax-m2.5-free"
+        echo "Invalid selection. Using default: openrouter/free"
+        model="openrouter/free"
       fi
     elif [ -n "$choice" ]; then
       # Custom model ID
       model="$choice"
     else
-      echo "Using default: minimax-m2.5-free"
-      model="minimax-m2.5-free"
+      echo "Using default: openrouter/free"
+      model="openrouter/free"
     fi
   fi
   
   echo "MODEL=$model" > "$CONFIG_FILE"
   echo ""
-  echo "✓ Config saved to $CONFIG_FILE (MODEL=$model)"
+  echo "[OK] Config saved to $CONFIG_FILE (MODEL=$model)"
   echo "  To change model later, run: ac --config"
   echo ""
 }
@@ -66,7 +76,7 @@ show_config() {
   read -p "Enter new model ID (or press Enter to keep current): " new_model
   if [ -n "$new_model" ]; then
     echo "MODEL=$new_model" > "$CONFIG_FILE"
-    echo "✓ Config updated"
+    echo "[OK] Config updated"
   fi
   exit 0
 }
@@ -87,13 +97,22 @@ if [ -z "$STAGED_SUMMARY" ]; then
 fi
 
 generate_message() {
-  # Convert model ID to provider/model format if needed
-  if [[ "$MODEL" == *"/"* ]]; then
-    model_arg="$MODEL"
-  else
-    model_arg="opencode/$MODEL"
+  if [ -z "$OPENROUTER_API_KEY" ]; then
+    echo "Error: OPENROUTER_API_KEY not set. Set it with: export OPENROUTER_API_KEY=your_key"
+    exit 1
   fi
-  opencode run -m "$model_arg" "Generate a commit message for these staged changes. RULES: (1) Return ONLY 1 word, no more. (2) Use ONLY lowercase. (3) Common types: 'fix', 'chores', 'feat', 'docs', 'refactor', 'init', 'test', 'update'. (4) Return ONLY the word itself, nothing else—no explanation, no punctuation, no markdown. Examples: 'fix', 'chores', 'feat'."
+  
+  prompt="Generate a commit message for these staged changes. RULES: (1) Return ONLY 1 word, no more. (2) Use ONLY lowercase. (3) Common types: 'fix', 'chores', 'feat', 'docs', 'refactor', 'init', 'test', 'update'. (4) Return ONLY the word itself, nothing else—no explanation, no punctuation, no markdown. Examples: 'fix', 'chores', 'feat'."
+  
+  curl -s "https://openrouter.ai/api/v1/chat/completions" \
+    -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"model\": \"$MODEL\",
+      \"messages\": [{\"role\": \"user\", \"content\": \"$prompt\"}],
+      \"temperature\": 0.7,
+      \"top_p\": 1
+    }" | jq -r '.choices[0].message.content // empty' | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
 attempt=1
@@ -116,7 +135,7 @@ while true; do
   case $choice in
     [aA])
       git commit -m "$COMMIT_MSG"
-      echo "✓ Committed"
+      echo "[OK] Committed"
       exit 0
       ;;
     [eE])
@@ -135,7 +154,7 @@ while true; do
       COMMIT_MSG=$(cat /tmp/commit_msg.tmp)
       rm -f /tmp/commit_msg.tmp
       git commit -m "$COMMIT_MSG"
-      echo "✓ Committed"
+      echo "[OK] Committed"
       exit 0
       ;;
     [rR])
