@@ -43,9 +43,19 @@ jobs:
       - name: Make binary executable
         run: chmod +x ac
 
+      - name: Extract Version from Commit
+        id: version
+        run: |
+          VERSION=$(git log -1 --pretty=%B | grep -oP 'v\d+\.\d+\.\d+' | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "version=v0.0.1" >> $GITHUB_OUTPUT
+          else
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
       - name: Auto Release Binary
         uses: softprops/action-gh-release@v2
         with:
           files: ac
-          tag_name: v${{ github.run_number }}
+          tag_name: ${{ steps.version.outputs.version }}
           generate_release_notes: true
